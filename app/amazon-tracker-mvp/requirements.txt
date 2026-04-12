@@ -1,0 +1,15 @@
+fastapi
+uvicorn
+sqlalchemy[asyncio]
+asyncpg
+playwright
+beautifulsoup4
+lxml
+pydantic-settings
+apscheduler
+jinja2
+hypothesis
+pytest
+pytest-asyncio
+httpx
+aiosqlite

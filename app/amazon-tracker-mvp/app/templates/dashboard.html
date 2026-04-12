@@ -1,0 +1,281 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+    .blink{animation:blink-anim .6s ease-in-out 3}
+    @keyframes blink-anim{0%,100%{opacity:1}50%{opacity:.2;box-shadow:0 0 8px #6366f1}}
+    .line-toggle{display:inline-flex;align-items:center;gap:.3rem;cursor:pointer;padding:.2rem .5rem;border-radius:4px;font-size:.8rem}
+    .line-toggle input{margin:0}
+    .line-toggle.was{color:#f59e0b}.line-toggle.t30{color:#10b981}.line-toggle.price{color:#6366f1}
+</style>
+
+<!-- Top bar with Reload All + Export -->
+<div style="display:flex;gap:0.5rem;margin-bottom:1rem;flex-wrap:wrap;align-items:center">
+    <button id="reload-btn" onclick="reloadAll(this)" class="outline">🔄 Reload All Prices</button>
+    <span style="flex:1"></span>
+    <small>Export Simulations:</small>
+    <a href="/api/v1/simulations/export" class="outline" role="button" style="font-size:.8rem">📥 All</a>
+    <a href="/api/v1/simulations/export?marketplace=AE" class="outline" role="button" style="font-size:.8rem">📥 AE</a>
+    <a href="/api/v1/simulations/export?marketplace=SA" class="outline" role="button" style="font-size:.8rem">📥 SA</a>
+    <a href="/api/v1/simulations/export?marketplace=AU" class="outline" role="button" style="font-size:.8rem">📥 AU</a>
+</div>
+
+<article>
+    <header><strong>Add Product to Track</strong></header>
+    <form id="add-form">
+        <div class="grid">
+            <label>Marketplace
+                <select id="marketplace" required>
+                    <option value="AE">🇦🇪 AE — amazon.ae</option>
+                    <option value="SA">🇸🇦 SA — amazon.sa</option>
+                    <option value="AU">🇦🇺 AU — amazon.com.au</option>
+                </select>
+            </label>
+            <label>ASIN <input type="text" id="asin" placeholder="Type ASIN (e.g. B0DGHWT2ZJ)" maxlength="10" required></label>
+            <button type="submit">Track</button>
+        </div>
+    </form>
+</article>
+
+<div class="stats-grid">
+    <div class="stat-card" onclick="filterMkt('ALL')" style="cursor:pointer"><article><div class="stat-value" id="stat-total">—</div><div class="stat-label">Tracked</div></article></div>
+    <div class="stat-card" onclick="filterMkt('AE')" style="cursor:pointer"><article><div class="stat-value" id="stat-ae">—</div><div class="stat-label">🇦🇪 AE</div></article></div>
+    <div class="stat-card" onclick="filterMkt('SA')" style="cursor:pointer"><article><div class="stat-value" id="stat-sa">—</div><div class="stat-label">🇸🇦 SA</div></article></div>
+    <div class="stat-card" onclick="filterMkt('AU')" style="cursor:pointer"><article><div class="stat-value" id="stat-au">—</div><div class="stat-label">🇦🇺 AU</div></article></div>
+</div>
+
+<article>
+    <header><strong>Tracked Products</strong></header>
+    <div id="product-list"><div class="empty-state">No products tracked yet.</div></div>
+</article>
+
+<dialog id="sim-dialog">
+    <article style="min-width:min(92vw,800px)">
+        <header>
+            <button aria-label="Close" rel="prev" onclick="document.getElementById('sim-dialog').close()"></button>
+            <strong id="sim-title">Price Simulation</strong>
+        </header>
+        <div id="current-price-info" class="stats-grid" style="margin-bottom:1.5rem"></div>
+        <form id="forecast-form" onsubmit="event.preventDefault();runForecast()">
+        <div style="display:flex;gap:0.8rem;align-items:end;flex-wrap:wrap;margin-bottom:0.8rem">
+            <label style="margin-bottom:0" id="custom-start-label"><small>Custom Start</small>
+                <input type="date" id="forecast-custom-start" lang="en" style="margin-bottom:0"></label>
+            <label style="margin-bottom:0"><small>Forecast Date</small>
+                <input type="date" id="forecast-end-date" lang="en" style="margin-bottom:0" required></label>
+        </div>
+        <div style="display:flex;gap:0.8rem;align-items:end;flex-wrap:wrap;margin-bottom:1rem">
+            <label style="margin-bottom:0" id="custom-price-label"><small>Custom Price</small>
+                <input type="number" id="forecast-custom-price" min="0" step="0.01" placeholder="price" style="width:120px;margin-bottom:0"></label>
+            <label style="margin-bottom:0" id="custom-dur-label"><small>Duration (days)</small>
+                <input type="number" id="forecast-custom-dur" min="1" value="30" style="width:90px;margin-bottom:0"></label>
+            <button type="submit" style="margin-bottom:0">🔮 Run & Save</button>
+        </div>
+        </form>
+
+        <!-- Was Price / T30 result cards (right below Run & Save) -->
+        <div id="forecast-info"></div>
+
+        <div style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;margin-bottom:1rem;margin-top:1rem">
+            <small style="opacity:.6">Base = current price. Custom applies only during the window.</small>
+        </div>
+
+        <!-- Line toggles + USD -->
+        <div style="display:flex;gap:1rem;margin-bottom:1rem;flex-wrap:wrap;align-items:center">
+            <label class="line-toggle was"><input type="checkbox" id="show-was" checked onchange="toggleLine()"> Was Price</label>
+            <label class="line-toggle t30"><input type="checkbox" id="show-t30" checked onchange="toggleLine()"> T30</label>
+            <label class="line-toggle" style="color:#818cf8"><input type="checkbox" id="show-price" checked onchange="toggleLine()"> Assumed Price</label>
+            <label class="line-toggle" style="color:#f59e0b;border:1px solid #f59e0b44;background:#f59e0b11;border-radius:6px;padding:0.3rem 0.6rem">
+                <input type="checkbox" id="forecast-usd" onchange="if(forecastLastData) renderForecastChart(forecastLastData)" style="margin:0"> 💲 USD</label>
+        </div>
+        <div id="forecast-container" style="position:relative;height:300px;display:none"><canvas id="forecast-chart"></canvas></div>
+        <div id="forecast-detail"></div>
+        <div style="margin-top:.5rem">
+            <a id="export-asin-link" href="#" class="outline" role="button" style="font-size:.8rem">📥 Export this ASIN's simulations</a>
+        </div>
+    </article>
+</dialog>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const API='/api/v1';
+let currentMkt='',currentAsin='',lastCurrency='',currentPrice=null;
+let forecastChart=null,forecastLastData=null,usdRate=null;
+let allProducts=[],activeMktFilter='ALL';
+const FLAGS={AE:'🇦🇪',SA:'🇸🇦',AU:'🇦🇺'};
+
+document.addEventListener('DOMContentLoaded',loadProducts);
+document.getElementById('add-form').addEventListener('submit',async(e)=>{
+    e.preventDefault();
+    const mkt=document.getElementById('marketplace').value;
+    const asin=document.getElementById('asin').value.toUpperCase().trim();
+    if(!asin)return;
+    const btn=e.target.querySelector('button[type=submit]');
+    btn.disabled=true;btn.textContent='⏳ Adding & Crawling...';
+    try{
+        const r=await fetch(`${API}/products`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({asin,marketplace:mkt})});
+        if(!r.ok){const e=await r.json();throw new Error(e.detail||'Failed');}
+        showToast(`Added & crawled ${FLAGS[mkt]||''} ${mkt}/${asin}`);
+        document.getElementById('asin').value='';loadProducts();
+    }catch(e){showToast(e.message,true);}
+    finally{btn.disabled=false;btn.textContent='Track';}
+});
+
+async function reloadAll(btn){
+    btn.disabled=true;btn.textContent='⏳ Reloading all...';
+    try{
+        const r=await fetch(`${API}/crawl-all`,{method:'POST'});
+        if(!r.ok){const e=await r.json();throw new Error(e.detail||'Fail');}
+        const d=await r.json();
+        const ok=d.results.filter(x=>x.status==='ok').length;
+        const fail=d.results.filter(x=>x.status==='failed').length;
+        showToast(`Reloaded: ${ok} success, ${fail} failed`);
+        loadProducts();
+    }catch(e){showToast(e.message,true);}
+    finally{btn.disabled=false;btn.textContent='🔄 Reload All Prices';}
+}
+
+async function loadProducts(){
+    try{const r=await fetch(`${API}/products`);allProducts=await r.json();renderStats(allProducts);renderProducts();
+        if(typeof twemoji!=='undefined')twemoji.parse(document.body);
+    }catch(e){showToast('Failed',true);}
+}
+function renderStats(p){
+    document.getElementById('stat-total').textContent=p.length;
+    document.getElementById('stat-ae').textContent=p.filter(x=>x.marketplace==='AE').length;
+    document.getElementById('stat-sa').textContent=p.filter(x=>x.marketplace==='SA').length;
+    document.getElementById('stat-au').textContent=p.filter(x=>x.marketplace==='AU').length;
+}
+function filterMkt(mkt){
+    activeMktFilter=mkt;
+    // Highlight active stat card
+    document.querySelectorAll('.stat-card').forEach(card=>{
+        card.style.outline=card.onclick&&card.onclick.toString().includes("'"+mkt+"'")?'2px solid var(--pico-primary)':'none';
+    });
+    // Simple approach: highlight by index
+    const cards=document.querySelectorAll('.stat-card');
+    cards.forEach(c=>c.style.outline='none');
+    if(mkt==='ALL'&&cards[0]) cards[0].style.outline='2px solid var(--pico-primary)';
+    if(mkt==='AE'&&cards[1]) cards[1].style.outline='2px solid var(--pico-primary)';
+    if(mkt==='SA'&&cards[2]) cards[2].style.outline='2px solid var(--pico-primary)';
+    if(mkt==='AU'&&cards[3]) cards[3].style.outline='2px solid var(--pico-primary)';
+    renderProducts();
+}
+function renderProducts(){
+    const filtered=activeMktFilter==='ALL'?allProducts:allProducts.filter(p=>p.marketplace===activeMktFilter);
+    const c=document.getElementById('product-list');
+    if(!filtered.length){c.innerHTML=`<div class="empty-state">${activeMktFilter==='ALL'?'No products tracked yet.':`No ${FLAGS[activeMktFilter]||''} ${activeMktFilter} products.`}</div>`;return;}
+    c.innerHTML=filtered.map(p=>`
+        <div class="product-card"><article><div class="product-grid">
+            <img class="product-img" src="${p.main_image_url||'/static/placeholder.svg'}" alt="${p.asin}" onerror="this.src='/static/placeholder.svg'">
+            <div><strong>${p.title||p.asin}</strong><br><small style="opacity:.6">${p.asin} · ${p.brand||'—'}</small></div>
+            <span class="badge badge-${p.marketplace.toLowerCase()}">${FLAGS[p.marketplace]||''} ${p.marketplace}</span>
+            <div class="actions">
+                <button class="outline" onclick="openSim('${p.marketplace}','${p.asin}','${(p.title||p.asin).replace(/'/g,"\\'")}')">🔮 Simulate</button>
+            </div>
+        </div></article></div>`).join('');
+}
+async function openSim(mkt,asin,title){
+    currentMkt=mkt;currentAsin=asin;
+    document.getElementById('sim-title').textContent=`${title} (${mkt}/${asin})`;
+    document.getElementById('forecast-info').innerHTML='';
+    document.getElementById('forecast-container').style.display='none';
+    // Set default forecast date to 90 days from today
+    const d=new Date();d.setDate(d.getDate()+90);
+    document.getElementById('forecast-end-date').value=d.toISOString().split('T')[0];
+    document.getElementById('export-asin-link').href=`${API}/simulations/export?marketplace=${mkt}&asin=${asin}`;
+    forecastLastData=null;
+    const info=document.getElementById('current-price-info');
+    info.innerHTML='<p>Loading...</p>';
+    try{
+        const r=await fetch(`${API}/products/${mkt}/${asin}/latest`);
+        if(r.ok){const s=await r.json();lastCurrency=s.currency||'';currentPrice=s.current_price;
+            info.innerHTML=`
+                <div class="stat-card"><article><div class="stat-value">${s.currency} ${s.current_price??'—'}</div><div class="stat-label">Current Price</div></article></div>
+                <div class="stat-card"><article><div class="stat-value">${s.rating??'—'} ⭐</div><div class="stat-label">${s.review_count??0} reviews</div></article></div>
+                <div class="stat-card"><article><div class="stat-value">${s.availability_text||'—'}</div><div class="stat-label">Availability</div></article></div>`;
+        }else{info.innerHTML='<p>No price data yet.</p>';currentPrice=null;}
+    }catch(e){info.innerHTML='<p>Failed.</p>';currentPrice=null;}
+    document.getElementById('sim-dialog').showModal();
+}
+async function fetchUsdRate(cur){
+    if(!cur||cur==='USD'){usdRate=1;return;}
+    try{const r=await fetch(`${API}/exchange-rate?from_currency=${cur}&to_currency=USD`);if(r.ok)usdRate=(await r.json()).rate;}catch(e){usdRate=null;}
+}
+async function runForecast(){
+    const forecastDate=document.getElementById('forecast-end-date').value;
+    const customPrice=document.getElementById('forecast-custom-price').value;
+    const customStart=document.getElementById('forecast-custom-start').value||'';
+    const customDur=document.getElementById('forecast-custom-dur').value||0;
+    const container=document.getElementById('forecast-container');
+    const info=document.getElementById('forecast-info');
+    if(!forecastDate){showToast('Please select a Forecast Until date',true);return;}
+    if(customPrice){['custom-price-label','custom-start-label','custom-dur-label'].forEach(id=>{const el=document.getElementById(id);el.classList.remove('blink');void el.offsetWidth;el.classList.add('blink');});}
+    info.innerHTML='<p>Forecasting...</p>';container.style.display='none';
+    let url=`${API}/products/${currentMkt}/${currentAsin}/forecast?forecast_date=${forecastDate}`;
+    if(customPrice) url+=`&custom_price=${customPrice}&custom_start_date=${customStart}&custom_duration=${customDur}`;
+    try{
+        const r=await fetch(url);if(!r.ok){const e=await r.json();throw new Error(e.detail||'Fail');}
+        const data=await r.json();forecastLastData=data;
+        await fetchUsdRate(data.currency);
+        renderForecastChart(data);
+        // Auto-save simulation
+        await fetch(`${API}/simulations/save`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+            asin:currentAsin,marketplace:currentMkt,current_price:data.current_price,
+            custom_price:data.custom_price,custom_start_day:data.custom_start_day,
+            custom_duration:data.custom_duration,currency:data.currency,
+            forecast_days:data.days,forecast:data.forecast,
+        })});
+    }catch(e){info.innerHTML=`<p style="color:#ef4444">${e.message}</p>`;}
+}
+function toggleLine(){
+    if(!forecastChart)return;
+    forecastChart.data.datasets[0].hidden=!document.getElementById('show-was').checked;
+    forecastChart.data.datasets[1].hidden=!document.getElementById('show-t30').checked;
+    forecastChart.data.datasets[2].hidden=!document.getElementById('show-price').checked;
+    forecastChart.update();
+}
+function renderForecastChart(data){
+    const container=document.getElementById('forecast-container');
+    const info=document.getElementById('forecast-info');
+    const showUsd=document.getElementById('forecast-usd').checked&&usdRate&&usdRate!==1;
+    const cur=showUsd?'USD':(data.currency||lastCurrency);
+    const cv=(v)=>v!=null?(showUsd?+(v*usdRate).toFixed(2):v):null;
+    container.style.display='block';
+    const ctx=document.getElementById('forecast-chart').getContext('2d');
+    if(forecastChart)forecastChart.destroy();
+    forecastChart=new Chart(ctx,{type:'line',data:{labels:data.forecast.map(f=>f.date),datasets:[
+        {label:`Was Price (${cur})`,data:data.forecast.map(f=>cv(f.was_price)),borderColor:'#f59e0b',fill:false,tension:.3,pointRadius:1,hidden:!document.getElementById('show-was').checked},
+        {label:`T30 (${cur})`,data:data.forecast.map(f=>cv(f.t30)),borderColor:'#10b981',fill:false,tension:.3,pointRadius:1,hidden:!document.getElementById('show-t30').checked},
+        {label:`Assumed Price (${cur})`,data:data.forecast.map(f=>cv(f.assumed_price)),borderColor:'#818cf8',borderDash:[5,5],fill:false,tension:0,pointRadius:0,hidden:!document.getElementById('show-price').checked}
+    ]},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},plugins:{legend:{display:false},tooltip:{
+        enabled:true,mode:'index',intersect:false,
+        backgroundColor:'rgba(0,0,0,0.85)',titleFont:{size:14,weight:'bold'},bodyFont:{size:13},padding:12,cornerRadius:8,
+        callbacks:{
+            title:function(items){return items[0]?.label||'';},
+            label:function(ctx){return ' '+ctx.dataset.label+': '+ctx.formattedValue;}
+        }
+    },annotation:{annotations:{
+        ...(data.custom_start_date?{customStartLine:{type:'line',xMin:data.custom_start_date,xMax:data.custom_start_date,borderColor:'#ef4444',borderWidth:2,borderDash:[4,4],label:{display:true,content:'Custom Start',position:'start',backgroundColor:'#ef444488',font:{size:10}}}}:{}),
+        forecastDateLine:{type:'line',xMin:data.forecast_date,xMax:data.forecast_date,borderColor:'#6366f1',borderWidth:2,borderDash:[4,4],label:{display:true,content:'Forecast Date',position:'start',backgroundColor:'#6366f188',font:{size:10}}}
+    }}},scales:{y:{beginAtZero:false,grid:{color:'#ffffff11'}},x:{grid:{display:false},ticks:{maxTicksLimit:10}}}}});
+    let desc=`Current: ${data.currency} ${data.current_price}`;
+    if(data.custom_price!=null) desc+=` | Custom: ${data.currency} ${data.custom_price} (from ${data.custom_start_date||'today'} for ${data.custom_duration}d)`;
+    const un=showUsd?` | 1 ${data.currency} = ${usdRate} USD`:'';
+    const fwp=cv(data.final_was_price);
+    const ft30=cv(data.final_t30);
+    info.innerHTML=`
+        <div class="stats-grid" style="margin-top:0.5rem">
+            <div class="stat-card"><article>
+                <div class="stat-value" style="color:#f59e0b">${fwp!=null?cur+' '+fwp:'—'}</div>
+                <div class="stat-label">Was Price @ ${data.forecast_date}</div>
+            </article></div>
+            <div class="stat-card"><article>
+                <div class="stat-value" style="color:#10b981">${ft30!=null?cur+' '+ft30:'—'}</div>
+                <div class="stat-label">T30 @ ${data.forecast_date}</div>
+            </article></div>
+        </div>`;
+    const detail=document.getElementById('forecast-detail');
+    detail.innerHTML=`<small>${desc}${un} | ✅ Saved</small>`;
+}
+</script>
+{% endblock %}

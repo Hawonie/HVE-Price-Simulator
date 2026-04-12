@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: price-simulator
+    runtime: docker
+    plan: free
+    disk:
+      name: data
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: TRACKER_DATABASE_URL
+        value: sqlite+aiosqlite:////data/tracker.db
+      - key: TRACKER_LOG_LEVEL
+        value: INFO
