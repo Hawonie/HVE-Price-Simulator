@@ -34,7 +34,6 @@ async def _create_snapshot(
     *,
     current_price: float | None = 99.99,
     review_count: int | None = 100,
-    availability_text: str | None = "In Stock",
     crawl_timestamp: datetime | None = None,
 ) -> ProductSnapshot:
     if crawl_timestamp is None:
@@ -43,7 +42,6 @@ async def _create_snapshot(
         product_id=product_id,
         current_price=current_price,
         review_count=review_count,
-        availability_text=availability_text,
         crawl_timestamp=crawl_timestamp,
     )
     session.add(snap)
@@ -75,12 +73,12 @@ async def test_no_changes_returns_empty(async_session):
 
     await _create_snapshot(
         async_session, product.id,
-        current_price=50.0, review_count=10, availability_text="In Stock",
+        current_price=50.0, review_count=10,
         crawl_timestamp=ts1,
     )
     new_snap = await _create_snapshot(
         async_session, product.id,
-        current_price=50.0, review_count=10, availability_text="In Stock",
+        current_price=50.0, review_count=10,
         crawl_timestamp=ts2,
     )
 
@@ -97,12 +95,12 @@ async def test_price_change_detected(async_session):
 
     await _create_snapshot(
         async_session, product.id,
-        current_price=50.0, review_count=10, availability_text="In Stock",
+        current_price=50.0, review_count=10,
         crawl_timestamp=ts1,
     )
     new_snap = await _create_snapshot(
         async_session, product.id,
-        current_price=45.0, review_count=10, availability_text="In Stock",
+        current_price=45.0, review_count=10,
         crawl_timestamp=ts2,
     )
 
@@ -116,25 +114,25 @@ async def test_price_change_detected(async_session):
 
 @pytest.mark.asyncio
 async def test_multiple_fields_changed(async_session):
-    """Changes in all three monitored fields should produce three records."""
+    """Changes in both monitored fields should produce two records."""
     product = await _create_product(async_session)
     ts1 = datetime(2024, 1, 1, tzinfo=timezone.utc)
     ts2 = datetime(2024, 1, 2, tzinfo=timezone.utc)
 
     await _create_snapshot(
         async_session, product.id,
-        current_price=50.0, review_count=10, availability_text="In Stock",
+        current_price=50.0, review_count=10,
         crawl_timestamp=ts1,
     )
     new_snap = await _create_snapshot(
         async_session, product.id,
-        current_price=60.0, review_count=20, availability_text="Out of Stock",
+        current_price=60.0, review_count=20,
         crawl_timestamp=ts2,
     )
 
     changes = await detect_changes(async_session, product.id, new_snap)
     field_names = {c.field_name for c in changes}
-    assert field_names == {"current_price", "review_count", "availability_text"}
+    assert field_names == {"current_price", "review_count"}
 
 
 @pytest.mark.asyncio
@@ -146,17 +144,17 @@ async def test_none_to_value_detected(async_session):
 
     await _create_snapshot(
         async_session, product.id,
-        current_price=None, review_count=None, availability_text=None,
+        current_price=None, review_count=None,
         crawl_timestamp=ts1,
     )
     new_snap = await _create_snapshot(
         async_session, product.id,
-        current_price=25.0, review_count=5, availability_text="In Stock",
+        current_price=25.0, review_count=5,
         crawl_timestamp=ts2,
     )
 
     changes = await detect_changes(async_session, product.id, new_snap)
-    assert len(changes) == 3
+    assert len(changes) == 2
     price_change = next(c for c in changes if c.field_name == "current_price")
     assert price_change.old_value is None
     assert price_change.new_value == "25.0"
@@ -171,17 +169,17 @@ async def test_value_to_none_detected(async_session):
 
     await _create_snapshot(
         async_session, product.id,
-        current_price=25.0, review_count=5, availability_text="In Stock",
+        current_price=25.0, review_count=5,
         crawl_timestamp=ts1,
     )
     new_snap = await _create_snapshot(
         async_session, product.id,
-        current_price=None, review_count=None, availability_text=None,
+        current_price=None, review_count=None,
         crawl_timestamp=ts2,
     )
 
     changes = await detect_changes(async_session, product.id, new_snap)
-    assert len(changes) == 3
+    assert len(changes) == 2
 
 
 # ---------------------------------------------------------------------------
@@ -200,20 +198,20 @@ def test_values_differ_one_none():
 
 def test_values_differ_same():
     assert _values_differ(10, 10) is False
-    assert _values_differ("In Stock", "In Stock") is False
+    assert _values_differ("hello", "hello") is False
 
 
 def test_values_differ_different():
     assert _values_differ(10, 20) is True
-    assert _values_differ("In Stock", "Out of Stock") is True
+    assert _values_differ("hello", "world") is True
 
 
 def test_to_str():
     assert _to_str(None) is None
     assert _to_str(50.0) == "50.0"
     assert _to_str(100) == "100"
-    assert _to_str("In Stock") == "In Stock"
+    assert _to_str("hello") == "hello"
 
 
 def test_monitored_fields_list():
-    assert MONITORED_FIELDS == ["current_price", "review_count", "availability_text"]
+    assert MONITORED_FIELDS == ["current_price", "review_count"]

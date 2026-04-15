@@ -17,5 +17,9 @@ class SimulationRecord(Base):
     custom_duration = Column(Integer, nullable=True)
     currency = Column(String(5), nullable=True)
     forecast_days = Column(Integer, nullable=True)
-    forecast_data = Column(JSON, nullable=True)  # full forecast array
+    forecast_data = Column(JSON, nullable=True)
+    sim_type = Column(String(20), nullable=True, default="forecast")  # "forecast" or "reverse"
+    target_price = Column(Float, nullable=True)
+    target_type = Column(String(20), nullable=True)  # "was_price" or "t30"
+    target_date = Column(String(20), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())

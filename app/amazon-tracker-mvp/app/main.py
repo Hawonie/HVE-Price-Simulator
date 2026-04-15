@@ -53,13 +53,20 @@ async def lifespan(app: FastAPI):
 
     # Browser manager not needed (using httpx)
     app.state.browser_manager = None
-    app.state.scheduler = None
-    logger.info("Server ready")
+
+    # Start periodic crawl scheduler
+    from app.services.scheduler import setup_scheduler
+    scheduler = setup_scheduler(session_factory, None, settings)
+    scheduler.start()
+    app.state.scheduler = scheduler
+    logger.info("Scheduler started — crawling every %d minutes", settings.crawl_interval_minutes)
 
     yield
 
     # Shutdown
     logger.info("Shutting down Amazon Tracker MVP")
+    if app.state.scheduler:
+        app.state.scheduler.shutdown(wait=False)
 
     await engine.dispose()
     logger.info("Database engine disposed")
@@ -79,3 +86,9 @@ app.include_router(router)
 async def dashboard(request: Request):
     """Serve the web dashboard."""
     return templates.TemplateResponse(request=request, name="dashboard.html")
+
+
+@app.get("/logs", response_class=HTMLResponse)
+async def logs_page(request: Request):
+    """Serve the simulation logs page."""
+    return templates.TemplateResponse(request=request, name="logs.html")

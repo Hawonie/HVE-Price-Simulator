@@ -18,7 +18,6 @@ def _make_snapshot(**overrides) -> ProductSnapshot:
         "list_price": 39.99,
         "rating": 4.5,
         "review_count": 120,
-        "availability_text": "In Stock",
         "seller_info": "Amazon.ae",
         "bullet_points": ["Feature A", "Feature B"],
         "crawl_timestamp": datetime(2025, 1, 15, 12, 0, 0, tzinfo=timezone.utc),
@@ -99,7 +98,6 @@ class TestExportSnapshotsCsv:
             list_price=None,
             rating=None,
             review_count=None,
-            availability_text=None,
             seller_info=None,
         )
         result = export_snapshots_csv([snap])

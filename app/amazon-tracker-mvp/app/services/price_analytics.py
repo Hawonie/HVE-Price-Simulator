@@ -306,3 +306,118 @@ async def forecast_price(
         })
 
     return forecasts
+
+
+# ---------------------------------------------------------------------------
+# Reverse Forecast – find the price needed to achieve a target Was Price / T30
+# ---------------------------------------------------------------------------
+
+
+async def reverse_forecast(
+    session: AsyncSession,
+    product_id: int,
+    current_price: float,
+    target_date: date,
+    target_was_price: float | None = None,
+    target_t30: float | None = None,
+) -> list[dict]:
+    """Find the minimum number of days a price must be held to achieve targets.
+
+    For each candidate start date (from today to target_date), compute what
+    price is needed from that start date through target_date to hit the
+    target Was Price or T30.
+
+    For T30: the price must be <= target_t30 for at least 1 day in the 30-day window.
+    So the answer is: set price to target_t30, start at most 30 days before target_date.
+
+    For Was Price: we binary-search the price that, when held from start_date
+    to target_date, produces the target median.
+
+    Returns a list of dicts with: start_date, days_needed, required_price,
+    resulting_was_price, resulting_t30.
+    """
+    today = date.today()
+    if target_date <= today:
+        return []
+
+    # Fetch existing snapshots
+    window_start = _make_naive(datetime(target_date.year, target_date.month, target_date.day) - timedelta(days=90))
+    stmt = (
+        select(ProductSnapshot.current_price, ProductSnapshot.crawl_timestamp)
+        .where(
+            ProductSnapshot.product_id == product_id,
+            ProductSnapshot.crawl_timestamp >= window_start,
+            ProductSnapshot.current_price.isnot(None),
+        )
+        .order_by(ProductSnapshot.crawl_timestamp.asc())
+    )
+    result = await session.execute(stmt)
+    existing = [(row[0], _make_naive(row[1]) if row[1] else row[1]) for row in result.all()]
+
+    real_dates: set[date] = set()
+    for _, ts in existing:
+        if ts:
+            real_dates.add(ts.date() if isinstance(ts, datetime) else ts)
+
+    target_dt = _make_naive(datetime(target_date.year, target_date.month, target_date.day, 23, 59, 59, 999999))
+    was_window_start = target_dt - timedelta(days=90)
+    t30_window_start = target_dt - timedelta(days=30)
+
+    results = []
+    total_days = (target_date - today).days
+
+    for start_offset in range(total_days + 1):
+        start_date = today + timedelta(days=start_offset)
+        days_held = (target_date - start_date).days + 1
+
+        # Build price lists for this scenario
+        # Try the target price itself
+        test_price = target_t30 if target_t30 is not None else (target_was_price if target_was_price is not None else current_price)
+
+        was_prices: list[float] = []
+        t30_prices: list[float] = []
+
+        # Real data
+        for price, ts in existing:
+            if was_window_start <= ts <= target_dt:
+                was_prices.append(price)
+            if t30_window_start <= ts <= target_dt:
+                t30_prices.append(price)
+
+        # Backfill past days without data
+        for back_day in range(91):
+            back_d = target_date - timedelta(days=back_day)
+            if back_d > today:
+                continue
+            if back_d in real_dates:
+                continue
+            back_dt = _make_naive(datetime(back_d.year, back_d.month, back_d.day, 12, 0, 0))
+            if was_window_start <= back_dt <= target_dt:
+                was_prices.append(current_price)
+            if t30_window_start <= back_dt <= target_dt:
+                t30_prices.append(current_price)
+
+        # Future days: current_price before start_date, test_price from start_date to target_date
+        for d in range(total_days + 1):
+            future_date = today + timedelta(days=d)
+            if future_date in real_dates and d == 0:
+                continue
+            future_dt = _make_naive(datetime(future_date.year, future_date.month, future_date.day, 12, 0, 0))
+            day_price = test_price if future_date >= start_date else current_price
+            if was_window_start <= future_dt <= target_dt:
+                was_prices.append(day_price)
+            if t30_window_start <= future_dt <= target_dt:
+                t30_prices.append(day_price)
+
+        res_was = compute_was_price(was_prices)
+        res_t30 = compute_t30(t30_prices)
+
+        results.append({
+            "start_date": start_date.isoformat(),
+            "days_needed": days_held,
+            "required_price": test_price,
+            "resulting_was_price": res_was,
+            "resulting_t30": res_t30,
+        })
+
+    return results

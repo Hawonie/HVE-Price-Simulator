@@ -75,7 +75,7 @@ async def add_product(
             session, product.id,
             current_price=parsed.current_price, currency=parsed.currency,
             list_price=parsed.list_price, rating=parsed.rating,
-            review_count=parsed.review_count, availability_text=parsed.availability_text,
+            review_count=parsed.review_count,
             seller_info=parsed.seller_info, bullet_points=parsed.bullet_points,
         )
         await product_service.upsert_product(
@@ -371,7 +371,6 @@ async def crawl_product(
         list_price=parsed.list_price,
         rating=parsed.rating,
         review_count=parsed.review_count,
-        availability_text=parsed.availability_text,
         seller_info=parsed.seller_info,
         bullet_points=parsed.bullet_points,
     )
@@ -399,6 +398,37 @@ async def crawl_product(
         "review_count": parsed.review_count,
         "image": parsed.main_image_url,
     }
+
+
+@router.post("/products/{marketplace}/{asin}/manual-price")
+async def save_manual_price(
+    marketplace: str,
+    asin: str,
+    body: dict,
+    session: AsyncSession = Depends(get_db),
+):
+    """Save a manually entered price as a snapshot (for AU or when auto-fetch fails)."""
+    mkt = marketplace.upper()
+    asin_upper = asin.upper()
+
+    product = await product_service.get_product(session, mkt, asin_upper)
+    if product is None:
+        raise HTTPException(status_code=404, detail=f"Product {mkt}/{asin_upper} not found.")
+
+    price = body.get("price")
+    if price is None or price <= 0:
+        raise HTTPException(status_code=400, detail="Valid price required.")
+
+    from app.config import MARKETPLACE_CONFIG
+    currency = body.get("currency") or MARKETPLACE_CONFIG.get(mkt, {}).get("currency", "USD")
+
+    snap = await snapshot_service.save_snapshot(
+        session, product.id,
+        current_price=price,
+        currency=currency,
+    )
+    await session.commit()
+    return {"status": "ok", "price": price, "currency": currency, "snapshot_id": snap.id}
 
 
 @router.post("/products/{marketplace}/{asin}/seed")
@@ -450,6 +480,7 @@ async def forecast_price_endpoint(
     custom_price: float | None = None,
     custom_start_date: date | None = None,
     custom_duration: int = 0,
+    manual_price: float | None = None,
     session: AsyncSession = Depends(get_db),
 ):
     """Forecast Was Price and T30 up to forecast_date."""
@@ -461,8 +492,19 @@ async def forecast_price_endpoint(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Product {mkt}/{asin_upper} not found.")
 
     latest = await snapshot_service.get_latest_snapshot(session, product.id)
-    if latest is None or latest.current_price is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"No price data for {mkt}/{asin_upper}. Crawl first.")
+    # Allow manual_price override when automated fetching fails (e.g. AU)
+    base_price = None
+    base_currency = None
+    if latest is not None:
+        base_price = latest.current_price
+        base_currency = latest.currency
+    if base_price is None and manual_price is not None:
+        base_price = manual_price
+    if base_currency is None:
+        from app.config import MARKETPLACE_CONFIG
+        base_currency = MARKETPLACE_CONFIG.get(mkt, {}).get("currency", "USD")
+    if base_price is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"No price data for {mkt}/{asin_upper}. Crawl first or provide manual_price.")
 
     from datetime import date as date_type
     today = date_type.today()
@@ -475,26 +517,39 @@ async def forecast_price_endpoint(
         custom_start_day = max(0, (custom_start_date - today).days)
 
     forecasts = await price_analytics.forecast_price(
-        session, product.id, latest.current_price,
+        session, product.id, base_price,
         days_ahead=min(days_ahead, 365),
         custom_price=custom_price,
         custom_start_day=custom_start_day,
         custom_duration=custom_duration,
     )
+    # Find earliest date where Was Price / T30 changes from day 0 value
+    was_change_date = None
+    t30_change_date = None
+    if forecasts:
+        base_was = forecasts[0]["was_price"]
+        base_t30 = forecasts[0]["t30"]
+        for f in forecasts[1:]:
+            if was_change_date is None and f["was_price"] != base_was:
+                was_change_date = f["date"]
+            if t30_change_date is None and f["t30"] != base_t30:
+                t30_change_date = f["date"]
+
     return {
         "asin": asin_upper,
         "marketplace": mkt,
-        "current_price": latest.current_price,
+        "current_price": base_price,
         "custom_price": custom_price,
         "custom_start_date": custom_start_date.isoformat() if custom_start_date else None,
         "custom_start_day": custom_start_day,
         "custom_duration": custom_duration,
         "forecast_date": forecast_date.isoformat(),
-        "currency": latest.currency,
+        "currency": base_currency,
         "days": len(forecasts),
-        # Final day values = Was Price / T30 at forecast date
         "final_was_price": forecasts[-1]["was_price"] if forecasts else None,
         "final_t30": forecasts[-1]["t30"] if forecasts else None,
+        "was_change_date": was_change_date,
+        "t30_change_date": t30_change_date,
         "forecast": forecasts,
     }
 
@@ -542,7 +597,7 @@ async def crawl_all_products(
                 session, product.id,
                 current_price=parsed.current_price, currency=parsed.currency,
                 list_price=parsed.list_price, rating=parsed.rating,
-                review_count=parsed.review_count, availability_text=parsed.availability_text,
+                review_count=parsed.review_count,
                 seller_info=parsed.seller_info, bullet_points=parsed.bullet_points,
             )
             await product_service.upsert_product(
@@ -563,20 +618,53 @@ async def save_simulation(
     body: dict,
     session: AsyncSession = Depends(get_db),
 ):
-    """Save a simulation record to the database."""
+    """Save a simulation record. Overwrites if same ASIN+marketplace+sim_type exists."""
+    from sqlalchemy import select
     from app.models.simulation import SimulationRecord
-    record = SimulationRecord(
-        asin=body.get("asin", ""),
-        marketplace=body.get("marketplace", ""),
-        current_price=body.get("current_price"),
-        custom_price=body.get("custom_price"),
-        custom_start_day=body.get("custom_start_day"),
-        custom_duration=body.get("custom_duration"),
-        currency=body.get("currency"),
-        forecast_days=body.get("forecast_days"),
-        forecast_data=body.get("forecast"),
+
+    asin = body.get("asin", "")
+    mkt = body.get("marketplace", "")
+    sim_type = body.get("sim_type", "forecast")
+
+    # Find existing record with same key
+    stmt = select(SimulationRecord).where(
+        SimulationRecord.asin == asin,
+        SimulationRecord.marketplace == mkt,
+        SimulationRecord.sim_type == sim_type,
     )
-    session.add(record)
+    result = await session.execute(stmt)
+    record = result.scalar_one_or_none()
+
+    if record:
+        # Update existing
+        record.current_price = body.get("current_price")
+        record.custom_price = body.get("custom_price")
+        record.custom_start_day = body.get("custom_start_day")
+        record.custom_duration = body.get("custom_duration")
+        record.currency = body.get("currency")
+        record.forecast_days = body.get("forecast_days")
+        record.forecast_data = body.get("forecast")
+        record.target_price = body.get("target_price")
+        record.target_type = body.get("target_type")
+        record.target_date = body.get("target_date")
+    else:
+        # Create new
+        record = SimulationRecord(
+            asin=asin, marketplace=mkt,
+            current_price=body.get("current_price"),
+            custom_price=body.get("custom_price"),
+            custom_start_day=body.get("custom_start_day"),
+            custom_duration=body.get("custom_duration"),
+            currency=body.get("currency"),
+            forecast_days=body.get("forecast_days"),
+            forecast_data=body.get("forecast"),
+            sim_type=sim_type,
+            target_price=body.get("target_price"),
+            target_type=body.get("target_type"),
+            target_date=body.get("target_date"),
+        )
+        session.add(record)
+
     await session.flush()
     await session.commit()
     return {"status": "ok", "id": record.id}
@@ -586,6 +674,7 @@ async def save_simulation(
 async def list_simulations(
     marketplace: str | None = None,
     asin: str | None = None,
+    sim_type: str | None = None,
     session: AsyncSession = Depends(get_db),
 ):
     """List saved simulations with optional filters."""
@@ -596,18 +685,28 @@ async def list_simulations(
         stmt = stmt.where(SimulationRecord.marketplace == marketplace.upper())
     if asin:
         stmt = stmt.where(SimulationRecord.asin == asin.upper())
+    if sim_type:
+        stmt = stmt.where(SimulationRecord.sim_type == sim_type)
     result = await session.execute(stmt)
     records = result.scalars().all()
-    return [
-        {
+    out = []
+    for r in records:
+        try:
+            ca = r.created_at.isoformat() if r.created_at and hasattr(r.created_at, 'isoformat') else str(r.created_at or '')
+        except Exception:
+            ca = ''
+        out.append({
             "id": r.id, "asin": r.asin, "marketplace": r.marketplace,
             "current_price": r.current_price, "custom_price": r.custom_price,
             "custom_start_day": r.custom_start_day, "custom_duration": r.custom_duration,
-            "currency": r.currency, "forecast_days": r.forecast_days,
-            "created_at": r.created_at.isoformat() if r.created_at else None,
-        }
-        for r in records
-    ]
+            "currency": getattr(r, 'currency', ''), "forecast_days": r.forecast_days,
+            "sim_type": getattr(r, 'sim_type', 'forecast') or "forecast",
+            "target_price": getattr(r, 'target_price', None),
+            "target_type": getattr(r, 'target_type', None),
+            "target_date": getattr(r, 'target_date', None),
+            "created_at": ca,
+        })
+    return out
 
 
 @router.get("/simulations/export")
@@ -619,35 +718,55 @@ async def export_simulations(
     """Export simulation records as CSV."""
     from sqlalchemy import select
     from app.models.simulation import SimulationRecord
-    stmt = select(SimulationRecord).order_by(SimulationRecord.created_at.desc())
-    if marketplace:
-        stmt = stmt.where(SimulationRecord.marketplace == marketplace.upper())
-    if asin:
-        stmt = stmt.where(SimulationRecord.asin == asin.upper())
-    result = await session.execute(stmt)
-    records = result.scalars().all()
+    try:
+        stmt = select(SimulationRecord).order_by(SimulationRecord.created_at.desc())
+        if marketplace:
+            stmt = stmt.where(SimulationRecord.marketplace == marketplace.upper())
+        if asin:
+            stmt = stmt.where(SimulationRecord.asin == asin.upper())
+        result = await session.execute(stmt)
+        records = list(result.scalars().all())
+    except Exception as e:
+        logger.error("Failed to query simulations: %s", e)
+        records = []
 
     buf = io.StringIO()
     writer = csv.writer(buf)
-    writer.writerow(["ID", "ASIN", "Marketplace", "Currency", "Current Price", "Custom Price",
-                      "Custom Start Day", "Custom Duration", "Forecast Days", "Created At",
-                      "Day", "Was Price", "T30"])
+    writer.writerow(["Day", "Was Price", "T30",
+                      "ID", "Type", "ASIN", "Marketplace", "Currency", "Current Price", "Custom Price",
+                      "Custom Start Date", "Custom Duration", "Forecast Days",
+                      "Target Price", "Target Type", "Target Date", "Created At"])
     for r in records:
-        if r.forecast_data:
-            for day_data in r.forecast_data:
-                writer.writerow([
-                    r.id, r.asin, r.marketplace, r.currency, r.current_price,
-                    r.custom_price, r.custom_start_day, r.custom_duration,
-                    r.forecast_days, r.created_at.isoformat() if r.created_at else "",
-                    day_data.get("date", ""), day_data.get("was_price", ""), day_data.get("t30", ""),
-                ])
+        created = ""
+        try:
+            created = r.created_at.isoformat() if r.created_at else ""
+        except Exception:
+            created = str(r.created_at) if r.created_at else ""
+        sim_type = getattr(r, 'sim_type', 'forecast') or 'forecast'
+        meta = [
+            r.id, sim_type,
+            r.asin, r.marketplace, getattr(r, 'currency', ''), r.current_price, r.custom_price,
+            r.custom_start_day, r.custom_duration, r.forecast_days,
+            getattr(r, 'target_price', '') if sim_type == 'reverse' else '',
+            getattr(r, 'target_type', '') if sim_type == 'reverse' else '',
+            getattr(r, 'target_date', '') if sim_type == 'reverse' else '',
+            created,
+        ]
+        if r.forecast_data and isinstance(r.forecast_data, list):
+            prev_wp = None
+            prev_t30 = None
+            for dd in r.forecast_data:
+                if not isinstance(dd, dict):
+                    continue
+                day = dd.get("date") or dd.get("start_date") or ""
+                wp = dd.get("was_price") if dd.get("was_price") is not None else dd.get("resulting_was_price")
+                t = dd.get("t30") if dd.get("t30") is not None else dd.get("resulting_t30")
+                if prev_wp is None or wp != prev_wp or t != prev_t30:
+                    writer.writerow([day, wp, t] + meta)
+                prev_wp = wp
+                prev_t30 = t
         else:
-            writer.writerow([
-                r.id, r.asin, r.marketplace, r.currency, r.current_price,
-                r.custom_price, r.custom_start_day, r.custom_duration,
-                r.forecast_days, r.created_at.isoformat() if r.created_at else "",
-                "", "", "",
-            ])
+            writer.writerow(["", "", ""] + meta)
 
     filename = f"simulations_{marketplace or 'all'}_{asin or 'all'}.csv"
     return StreamingResponse(
@@ -655,3 +774,160 @@ async def export_simulations(
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+@router.delete("/simulations/{sim_id}")
+async def delete_simulation(
+    sim_id: int,
+    session: AsyncSession = Depends(get_db),
+):
+    """Delete a single simulation record by ID."""
+    from sqlalchemy import select
+    from app.models.simulation import SimulationRecord
+    stmt = select(SimulationRecord).where(SimulationRecord.id == sim_id)
+    result = await session.execute(stmt)
+    record = result.scalar_one_or_none()
+    if record is None:
+        raise HTTPException(status_code=404, detail=f"Simulation {sim_id} not found.")
+    await session.delete(record)
+    await session.commit()
+    return {"status": "ok", "deleted_id": sim_id}
+
+
+@router.get("/products/{marketplace}/{asin}/reverse-forecast")
+async def reverse_forecast_endpoint(
+    marketplace: str,
+    asin: str,
+    target_date: date,
+    target_price: float,
+    target_type: str = "was_price",
+    manual_price: float | None = None,
+    session: AsyncSession = Depends(get_db),
+):
+    """Reverse simulation: find when to start a price change to hit a target.
+
+    - target_type: "was_price" or "t30"
+    - target_price: the desired Was Price or T30 value
+    - target_date: the date by which you want to achieve the target
+    """
+    mkt = marketplace.upper()
+    asin_upper = asin.upper()
+
+    product = await product_service.get_product(session, mkt, asin_upper)
+    if product is None:
+        raise HTTPException(status_code=404, detail=f"Product {mkt}/{asin_upper} not found.")
+
+    latest = await snapshot_service.get_latest_snapshot(session, product.id)
+    base_price = None
+    base_currency = None
+    if latest is not None:
+        base_price = latest.current_price
+        base_currency = latest.currency
+    if base_price is None and manual_price is not None:
+        base_price = manual_price
+    if base_currency is None:
+        from app.config import MARKETPLACE_CONFIG
+        base_currency = MARKETPLACE_CONFIG.get(mkt, {}).get("currency", "USD")
+    if base_price is None:
+        raise HTTPException(status_code=404, detail=f"No price data for {mkt}/{asin_upper}.")
+
+    target_was = target_price if target_type == "was_price" else None
+    target_t30 = target_price if target_type == "t30" else None
+
+    results = await price_analytics.reverse_forecast(
+        session, product.id, base_price,
+        target_date=target_date,
+        target_was_price=target_was,
+        target_t30=target_t30,
+    )
+
+    # Find the latest start date that achieves the target
+    # "Latest" = fewest days needed = start as late as possible
+    best = None
+    for r in reversed(results):
+        val = r["resulting_was_price"] if target_type == "was_price" else r["resulting_t30"]
+        if val is None:
+            continue
+        # Check if target is achieved:
+        # If target < current → we're lowering, so val must be <= target
+        # If target > current → we're raising, so val must be >= target
+        # If target == current → val must equal target
+        if target_price <= base_price:
+            if val <= target_price + 0.01:  # small tolerance
+                best = r
+                break
+        else:
+            if val >= target_price - 0.01:
+                best = r
+                break
+
+    # Also find the earliest start that achieves it (most conservative)
+    earliest = None
+    for r in results:
+        val = r["resulting_was_price"] if target_type == "was_price" else r["resulting_t30"]
+        if val is None:
+            continue
+        if target_price <= base_price:
+            if val <= target_price + 0.01:
+                earliest = r
+                break
+        else:
+            if val >= target_price - 0.01:
+                earliest = r
+                break
+
+    return {
+        "asin": asin_upper,
+        "marketplace": mkt,
+        "current_price": base_price,
+        "currency": base_currency,
+        "target_date": target_date.isoformat(),
+        "target_price": target_price,
+        "target_type": target_type,
+        "best_start": best,
+        "earliest_start": earliest,
+        "timeline": results,
+    }
+
+
+@router.delete("/products/{marketplace}/{asin}")
+async def delete_product(
+    marketplace: str,
+    asin: str,
+    session: AsyncSession = Depends(get_db),
+):
+    """Hide a tracked product (preserves snapshots for future re-tracking)."""
+    mkt = marketplace.upper()
+    asin_upper = asin.upper()
+
+    product = await product_service.get_product(session, mkt, asin_upper)
+    if product is None:
+        raise HTTPException(status_code=404, detail=f"Product {mkt}/{asin_upper} not found.")
+
+    product.hidden = True
+    await session.commit()
+    return {"status": "ok", "hidden": f"{mkt}/{asin_upper}"}
+
+
+@router.delete("/products/{marketplace}/{asin}/history")
+async def clear_snapshot_history(
+    marketplace: str,
+    asin: str,
+    session: AsyncSession = Depends(get_db),
+):
+    """Delete all snapshots for a product (keeps the product itself)."""
+    from sqlalchemy import delete as sql_delete
+    from app.models.snapshot import ProductSnapshot
+
+    mkt = marketplace.upper()
+    asin_upper = asin.upper()
+
+    product = await product_service.get_product(session, mkt, asin_upper)
+    if product is None:
+        raise HTTPException(status_code=404, detail=f"Product {mkt}/{asin_upper} not found.")
+
+    result = await session.execute(
+        sql_delete(ProductSnapshot).where(ProductSnapshot.product_id == product.id)
+    )
+    await session.commit()
+    return {"status": "ok", "deleted_snapshots": result.rowcount}

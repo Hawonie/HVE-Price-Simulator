@@ -75,7 +75,6 @@ async def test_save_snapshot_with_all_fields(async_session: AsyncSession):
         list_price=199.00,
         rating=4.3,
         review_count=512,
-        availability_text="In Stock",
         seller_info="Amazon.ae",
         bullet_points=["Feature A", "Feature B"],
     )
@@ -84,7 +83,6 @@ async def test_save_snapshot_with_all_fields(async_session: AsyncSession):
     assert snap.list_price == 199.00
     assert snap.rating == 4.3
     assert snap.review_count == 512
-    assert snap.availability_text == "In Stock"
     assert snap.seller_info == "Amazon.ae"
     assert snap.bullet_points == ["Feature A", "Feature B"]
 

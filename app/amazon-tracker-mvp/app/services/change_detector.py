@@ -11,7 +11,7 @@ from app.services.snapshot_service import get_latest_snapshot
 
 logger = logging.getLogger(__name__)
 
-MONITORED_FIELDS = ["current_price", "review_count", "availability_text"]
+MONITORED_FIELDS = ["current_price", "review_count"]
 
 
 async def detect_changes(

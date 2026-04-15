@@ -1,0 +1,28 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: tracker
+      POSTGRES_PASSWORD: tracker123
+      POSTGRES_DB: price_simulator
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  app:
+    build: .
+    restart: always
+    ports:
+      - "8000:10000"
+    depends_on:
+      - db
+    environment:
+      TRACKER_DATABASE_URL: postgresql+asyncpg://tracker:tracker123@db:5432/price_simulator
+      TRACKER_LOG_LEVEL: INFO
+
+volumes:
+  pgdata:

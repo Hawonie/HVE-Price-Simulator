@@ -27,6 +27,10 @@ class Settings(BaseSettings):
     # Logging
     log_level: str = "INFO"
 
+    # Proxy for AU marketplace (optional)
+    # Example: "http://user:pass@au-proxy.example.com:8080"
+    au_proxy_url: str = ""
+
     model_config = {"env_file": ".env", "env_prefix": "TRACKER_"}
 
 

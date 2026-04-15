@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Simulation Logs</h2>
+<div style="display:flex;gap:0.5rem;margin-bottom:1rem;flex-wrap:wrap;align-items:center">
+    <select id="log-filter-mkt" onchange="loadLogs()" style="width:auto;margin-bottom:0">
+        <option value="">All Marketplaces</option>
+        <option value="AE">🇦🇪 AE</option>
+        <option value="SA">🇸🇦 SA</option>
+        <option value="AU">🇦🇺 AU</option>
+    </select>
+    <input type="text" id="log-filter-asin" placeholder="Filter by ASIN" oninput="loadLogs()" style="width:150px;margin-bottom:0">
+    <select id="log-filter-type" onchange="loadLogs()" style="width:auto;margin-bottom:0">
+        <option value="">All Types</option>
+        <option value="forecast">Forecast</option>
+        <option value="reverse">Reverse</option>
+    </select>
+    <span style="flex:1"></span>
+    <a id="export-link" href="/api/v1/simulations/export" class="outline" role="button" style="font-size:.85rem">📥 Export CSV</a>
+</div>
+<div id="log-table">
+    <p>Loading...</p>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const API='/api/v1';
+document.addEventListener('DOMContentLoaded', loadLogs);
+
+async function loadLogs(){
+    const mkt=document.getElementById('log-filter-mkt').value;
+    const asin=document.getElementById('log-filter-asin').value.toUpperCase().trim();
+    const type=document.getElementById('log-filter-type').value;
+    const container=document.getElementById('log-table');
+
+    let url=`${API}/simulations?`;
+    if(mkt) url+=`marketplace=${mkt}&`;
+    if(asin) url+=`asin=${asin}&`;
+    if(type) url+=`sim_type=${type}&`;
+
+    // Update export link
+    let expUrl=`${API}/simulations/export?`;
+    if(mkt) expUrl+=`marketplace=${mkt}&`;
+    if(asin) expUrl+=`asin=${asin}&`;
+    document.getElementById('export-link').href=expUrl;
+    document.getElementById('export-link').textContent=asin?`📥 Export ${asin}`:(mkt?`📥 Export ${mkt}`:'📥 Export All');
+
+    try{
+        const r=await fetch(url);
+        const logs=await r.json();
+        if(!logs.length){container.innerHTML='<p class="empty-state">No simulation logs yet.</p>';return;}
+        container.innerHTML=`<div style="overflow-x:auto"><table role="grid">
+            <thead><tr>
+                <th>Time</th><th>Type</th><th>ASIN</th><th>Mkt</th><th>Currency</th>
+                <th>Current</th><th>Custom</th><th>Start Date</th><th>End Date</th>
+                <th>Forecast Days</th><th>Target Price</th><th>Target Type</th><th>Target Date</th>
+                <th>Deadline</th><th>Min Duration</th><th></th>
+            </tr></thead>
+            <tbody>${logs.map(l=>{
+                const isRev=l.sim_type==='reverse';
+                return `<tr id="log-row-${l.id}">
+                <td style="white-space:nowrap;font-size:.8rem">${l.created_at?new Date(l.created_at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}):''}</td>
+                <td><span style="font-size:.75rem;padding:.1rem .4rem;border-radius:3px;background:${isRev?'#6366f122':'#f59e0b22'};color:${isRev?'#818cf8':'#f59e0b'}">${l.sim_type||'forecast'}</span></td>
+                <td style="font-family:monospace;font-size:.85rem"><a href="#" onclick="event.preventDefault();document.getElementById('log-filter-asin').value='${l.asin}';loadLogs()" style="text-decoration:none">${l.asin}</a></td>
+                <td>${l.marketplace}</td>
+                <td>${l.currency||''}</td>
+                <td>${l.current_price??'—'}</td>
+                <td>${l.custom_price??'—'}</td>
+                <td style="font-size:.85rem">${!isRev&&l.custom_start_day!=null?l.custom_start_day:'—'}</td>
+                <td style="font-size:.85rem">${!isRev&&l.custom_duration?l.custom_duration+'d':'—'}</td>
+                <td style="font-size:.85rem">${l.forecast_days??'—'}</td>
+                <td style="font-size:.85rem">${isRev&&l.target_price!=null?l.target_price:'—'}</td>
+                <td style="font-size:.85rem">${isRev&&l.target_type?l.target_type:'—'}</td>
+                <td style="font-size:.85rem">${isRev&&l.target_date?l.target_date:'—'}</td>
+                <td style="font-size:.85rem">${isRev&&l.custom_start_day?l.custom_start_day:'—'}</td>
+                <td style="font-size:.85rem">${isRev&&l.custom_duration?l.custom_duration+'d':'—'}</td>
+                <td style="white-space:nowrap">
+                    <a href="${API}/simulations/export?asin=${l.asin}&marketplace=${l.marketplace}" class="outline" role="button" style="padding:.2rem .4rem;font-size:.7rem">📥</a>
+                    <button class="outline" onclick="deleteLog(${l.id},this)" style="color:#ef4444;padding:.2rem .5rem;font-size:.75rem">🗑</button>
+                </td>
+            </tr>`}).join('')}</tbody>
+        </table></div>`;
+    }catch(e){container.innerHTML=`<p style="color:#ef4444">Failed to load logs.</p>`;}
+}
+
+async function deleteLog(id,btn){
+    if(!confirm('Delete this simulation log?')) return;
+    btn.disabled=true;
+    try{
+        const r=await fetch(`${API}/simulations/${id}`,{method:'DELETE'});
+        if(!r.ok){const e=await r.json();throw new Error(e.detail||'Failed');}
+        const row=document.getElementById('log-row-'+id);
+        if(row) row.remove();
+    }catch(e){alert(e.message);btn.disabled=false;}
+}
+</script>
+{% endblock %}

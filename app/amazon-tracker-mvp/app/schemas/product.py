@@ -39,7 +39,6 @@ class SnapshotResponse(BaseModel):
     list_price: float | None
     rating: float | None
     review_count: int | None
-    availability_text: str | None
     seller_info: str | None
     bullet_points: list[str] | None
     crawl_timestamp: datetime

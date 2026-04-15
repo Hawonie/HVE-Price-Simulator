@@ -37,7 +37,7 @@ async def main():
 
     # Get all tracked products
     async with session_factory() as session:
-        products = await product_service.list_products(session)
+        products = await product_service.list_all_products(session)
 
     if not products:
         logger.info("No products to crawl. Add products first via the web UI.")
@@ -62,7 +62,6 @@ async def main():
                     list_price=parsed.list_price,
                     rating=parsed.rating,
                     review_count=parsed.review_count,
-                    availability_text=parsed.availability_text,
                     seller_info=parsed.seller_info,
                     bullet_points=parsed.bullet_points,
                 )

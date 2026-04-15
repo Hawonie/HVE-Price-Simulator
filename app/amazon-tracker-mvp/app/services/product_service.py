@@ -41,6 +41,7 @@ async def upsert_product(
         product.title = title
         product.brand = brand
         product.main_image_url = main_image_url
+        product.hidden = False
         product.updated_at = datetime.now(timezone.utc)
         logger.info("Updated product %s/%s", marketplace, asin)
     else:
@@ -74,7 +75,14 @@ async def get_product(
 
 
 async def list_products(session: AsyncSession) -> list[Product]:
-    """Return all tracked products ordered by id."""
+    """Return all visible (non-hidden) tracked products ordered by id."""
+    stmt = select(Product).where(Product.hidden == False).order_by(Product.id)  # noqa: E712
+    result = await session.execute(stmt)
+    return list(result.scalars().all())
+
+
+async def list_all_products(session: AsyncSession) -> list[Product]:
+    """Return ALL products (including hidden) for background crawling."""
     stmt = select(Product).order_by(Product.id)
     result = await session.execute(stmt)
     return list(result.scalars().all())

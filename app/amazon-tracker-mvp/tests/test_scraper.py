@@ -204,7 +204,6 @@ class TestParsedProduct:
             list_price=129.99,
             rating=4.5,
             review_count=100,
-            availability_text="In Stock",
             main_image_url="https://img.com/test.jpg",
             bullet_points=["a", "b"],
             seller_info="Amazon",

@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, Integer, String, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
@@ -21,6 +21,7 @@ class Product(Base):
     title: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     brand: Mapped[str | None] = mapped_column(String(200), nullable=True)
     main_image_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    hidden: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

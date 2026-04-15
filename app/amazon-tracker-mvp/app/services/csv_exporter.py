@@ -13,7 +13,6 @@ CSV_COLUMNS = [
     "list_price",
     "rating",
     "review_count",
-    "availability_text",
     "seller_info",
     "bullet_points",
 ]
@@ -51,7 +50,6 @@ def export_snapshots_csv(snapshots: list[ProductSnapshot]) -> str:
             snap.list_price if snap.list_price is not None else "",
             snap.rating if snap.rating is not None else "",
             snap.review_count if snap.review_count is not None else "",
-            snap.availability_text or "",
             snap.seller_info or "",
             bp,
         ])

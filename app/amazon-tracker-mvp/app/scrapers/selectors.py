@@ -15,11 +15,17 @@ SELECTOR_CONFIG: dict[str, FieldSelectors] = {
         "h1.product-title-word-break span",
     ]),
     "current_price": FieldSelectors(selectors=[
-        "span.a-price .a-offscreen",
-        "#priceblock_ourprice",
-        "#priceblock_dealprice",
+        "#corePriceDisplay_desktop_feature_div .a-offscreen",
+        "#corePrice_desktop .a-offscreen",
         "span.priceToPay .a-offscreen",
         "#corePrice_feature_div .a-offscreen",
+        "#apex_desktop .a-price .a-offscreen",
+        ".reinventPricePriceToPayMargin .a-offscreen",
+        "#tp_price_block_total_price_ww .a-offscreen",
+        "#price_inside_buybox",
+        "#priceblock_ourprice",
+        "#priceblock_dealprice",
+        "#newBuyBoxPrice",
     ]),
     "list_price": FieldSelectors(selectors=[
         "span.a-price.a-text-price .a-offscreen",
@@ -40,11 +46,6 @@ SELECTOR_CONFIG: dict[str, FieldSelectors] = {
         "#landingImage",
         "#imgBlkFront",
         "#main-image",
-    ]),
-    "availability_text": FieldSelectors(selectors=[
-        "#availability span",
-        "#outOfStock span",
-        "#deliveryMessageMirId span",
     ]),
     "brand": FieldSelectors(selectors=[
         "#bylineInfo",

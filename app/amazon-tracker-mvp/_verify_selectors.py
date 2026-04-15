@@ -7,7 +7,7 @@ for k, v in SELECTOR_CONFIG.items():
     assert isinstance(v, FieldSelectors), f"{k} is not FieldSelectors"
     print(f"  {k}: {len(v.selectors)} selectors")
 
-expected = ["title", "current_price", "list_price", "rating", "review_count", "main_image_url", "availability_text", "brand", "seller_info"]
+expected = ["title", "current_price", "list_price", "rating", "review_count", "main_image_url", "brand", "seller_info"]
 for field in expected:
     assert field in SELECTOR_CONFIG, f"Missing field: {field}"
 

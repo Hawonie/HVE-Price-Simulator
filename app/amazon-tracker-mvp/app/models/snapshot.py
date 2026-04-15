@@ -25,7 +25,6 @@ class ProductSnapshot(Base):
     list_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     rating: Mapped[float | None] = mapped_column(Float, nullable=True)
     review_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    availability_text: Mapped[str | None] = mapped_column(String(500), nullable=True)
     seller_info: Mapped[str | None] = mapped_column(String(500), nullable=True)
     bullet_points: Mapped[list | None] = mapped_column(JSON, nullable=True)
     crawl_timestamp: Mapped[datetime] = mapped_column(

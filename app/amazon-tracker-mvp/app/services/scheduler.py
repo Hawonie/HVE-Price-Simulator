@@ -27,7 +27,7 @@ async def crawl_all_products(
     logger.info("Scheduled crawl started")
 
     async with session_factory() as session:
-        products = await product_service.list_products(session)
+        products = await product_service.list_all_products(session)
 
     logger.info("Found %d tracked products to crawl", len(products))
 
@@ -49,7 +49,6 @@ async def crawl_all_products(
                     list_price=parsed.list_price,
                     rating=parsed.rating,
                     review_count=parsed.review_count,
-                    availability_text=parsed.availability_text,
                     seller_info=parsed.seller_info,
                     bullet_points=parsed.bullet_points,
                 )

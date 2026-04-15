@@ -12,6 +12,7 @@
 <div style="display:flex;gap:0.5rem;margin-bottom:1rem;flex-wrap:wrap;align-items:center">
     <button id="reload-btn" onclick="reloadAll(this)" class="outline">🔄 Reload All Prices</button>
     <span style="flex:1"></span>
+    <small style="opacity:0.5;margin-right:1rem">📡 Prices auto-update every 6h · Manual refresh: click Reload All Prices</small>
     <small>Export Simulations:</small>
     <a href="/api/v1/simulations/export" class="outline" role="button" style="font-size:.8rem">📥 All</a>
     <a href="/api/v1/simulations/export?marketplace=AE" class="outline" role="button" style="font-size:.8rem">📥 AE</a>
@@ -24,13 +25,14 @@
     <form id="add-form">
         <div class="grid">
             <label>Marketplace
-                <select id="marketplace" required>
+                <select id="marketplace" required onchange="toggleAuPrice()">
                     <option value="AE">🇦🇪 AE — amazon.ae</option>
                     <option value="SA">🇸🇦 SA — amazon.sa</option>
                     <option value="AU">🇦🇺 AU — amazon.com.au</option>
                 </select>
             </label>
             <label>ASIN <input type="text" id="asin" placeholder="Type ASIN (e.g. B0DGHWT2ZJ)" maxlength="10" required></label>
+            <label id="au-add-price-label" style="display:none">AUD Price <input type="number" id="au-add-price" min="0" step="0.01" placeholder="e.g. 20.86"></label>
             <button type="submit">Track</button>
         </div>
     </form>
@@ -49,50 +51,113 @@
 </article>
 
 <dialog id="sim-dialog">
-    <article style="min-width:min(92vw,800px)">
+    <article style="width:min(90vw,850px);max-height:92vh;overflow-y:auto">
         <header>
             <button aria-label="Close" rel="prev" onclick="document.getElementById('sim-dialog').close()"></button>
             <strong id="sim-title">Price Simulation</strong>
         </header>
-        <div id="current-price-info" class="stats-grid" style="margin-bottom:1.5rem"></div>
+
+        <!-- USD toggle at top -->
+        <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:1rem">
+            <label class="line-toggle" style="color:#f59e0b;border:1px solid #f59e0b44;background:#f59e0b11;border-radius:6px;padding:0.3rem 0.6rem">
+                <input type="checkbox" id="forecast-usd" onchange="onUsdToggle()" style="margin:0"> 💲 Show in USD</label>
+            <small id="usd-rate-info" style="opacity:0.6"></small>
+        </div>
+
+        <div id="current-price-info" class="stats-grid" style="margin-bottom:1rem"></div>
         <form id="forecast-form" onsubmit="event.preventDefault();runForecast()">
-        <div style="display:flex;gap:0.8rem;align-items:end;flex-wrap:wrap;margin-bottom:0.8rem">
-            <label style="margin-bottom:0" id="custom-start-label"><small>Custom Start</small>
+        <div style="display:flex;gap:0.8rem;align-items:end;flex-wrap:wrap;margin-bottom:0.5rem">
+            <label style="margin-bottom:0" id="custom-start-label"><small>Custom Price Start Date</small>
                 <input type="date" id="forecast-custom-start" lang="en" style="margin-bottom:0"></label>
+            <label style="margin-bottom:0" id="custom-dur-label"><small>Custom Price End Date</small>
+                <input type="date" id="forecast-custom-end" lang="en" style="margin-bottom:0"></label>
+        </div>
+        <div style="display:flex;gap:0.8rem;align-items:end;flex-wrap:wrap;margin-bottom:0.5rem">
             <label style="margin-bottom:0"><small>Forecast Date</small>
                 <input type="date" id="forecast-end-date" lang="en" style="margin-bottom:0" required></label>
-        </div>
-        <div style="display:flex;gap:0.8rem;align-items:end;flex-wrap:wrap;margin-bottom:1rem">
             <label style="margin-bottom:0" id="custom-price-label"><small>Custom Price</small>
                 <input type="number" id="forecast-custom-price" min="0" step="0.01" placeholder="price" style="width:120px;margin-bottom:0"></label>
-            <label style="margin-bottom:0" id="custom-dur-label"><small>Duration (days)</small>
-                <input type="number" id="forecast-custom-dur" min="1" value="30" style="width:90px;margin-bottom:0"></label>
             <button type="submit" style="margin-bottom:0">🔮 Run & Save</button>
         </div>
         </form>
 
-        <!-- Was Price / T30 result cards (right below Run & Save) -->
+        <!-- Was Price / T30 result cards -->
         <div id="forecast-info"></div>
 
-        <div style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;margin-bottom:1rem;margin-top:1rem">
-            <small style="opacity:.6">Base = current price. Custom applies only during the window.</small>
-        </div>
-
-        <!-- Line toggles + USD -->
-        <div style="display:flex;gap:1rem;margin-bottom:1rem;flex-wrap:wrap;align-items:center">
+        <!-- Line toggles -->
+        <div style="display:flex;gap:0.8rem;align-items:end;flex-wrap:wrap;margin-bottom:0.8rem">
             <label class="line-toggle was"><input type="checkbox" id="show-was" checked onchange="toggleLine()"> Was Price</label>
             <label class="line-toggle t30"><input type="checkbox" id="show-t30" checked onchange="toggleLine()"> T30</label>
             <label class="line-toggle" style="color:#818cf8"><input type="checkbox" id="show-price" checked onchange="toggleLine()"> Assumed Price</label>
-            <label class="line-toggle" style="color:#f59e0b;border:1px solid #f59e0b44;background:#f59e0b11;border-radius:6px;padding:0.3rem 0.6rem">
-                <input type="checkbox" id="forecast-usd" onchange="if(forecastLastData) renderForecastChart(forecastLastData)" style="margin:0"> 💲 USD</label>
         </div>
-        <div id="forecast-container" style="position:relative;height:300px;display:none"><canvas id="forecast-chart"></canvas></div>
+        <div id="forecast-container" style="position:relative;height:200px;display:none"><canvas id="forecast-chart"></canvas></div>
         <div id="forecast-detail"></div>
-        <div style="margin-top:.5rem">
+
+        <!-- Simulate in Reverse is in a separate dialog -->
+
+        <div style="margin-top:1rem">
             <a id="export-asin-link" href="#" class="outline" role="button" style="font-size:.8rem">📥 Export this ASIN's simulations</a>
         </div>
     </article>
 </dialog>
+
+<!-- Reverse Simulation Dialog -->
+<dialog id="rev-dialog">
+    <article style="width:min(90vw,850px);max-height:92vh;overflow-y:auto">
+        <header>
+            <button aria-label="Close" rel="prev" onclick="document.getElementById('rev-dialog').close()"></button>
+            <strong id="rev-title">🔄 Simulate in Reverse</strong>
+        </header>
+        <div id="rev-price-info" class="stats-grid" style="margin-bottom:1.5rem"></div>
+        <p style="opacity:0.6;font-size:0.85rem;margin-bottom:1rem">Find when you need to start a price change to achieve a target Was Price or T30 by a specific date.</p>
+        <form id="reverse-form" onsubmit="event.preventDefault();runReverse()">
+        <div style="display:flex;gap:0.8rem;align-items:end;flex-wrap:wrap;margin-bottom:0.8rem">
+            <label style="margin-bottom:0"><small>Target Date</small>
+                <input type="date" id="rev-target-date" lang="en" style="margin-bottom:0" required></label>
+            <label style="margin-bottom:0"><small>Target Value</small>
+                <input type="number" id="rev-target-price" min="0" step="0.01" placeholder="desired price" style="width:130px;margin-bottom:0" required></label>
+            <label style="margin-bottom:0"><small>Target Type</small>
+                <select id="rev-target-type" style="margin-bottom:0">
+                    <option value="was_price">Was Price</option>
+                    <option value="t30">T30</option>
+                </select></label>
+            <button type="submit" style="margin-bottom:0">🔄 Find Start Date</button>
+        </div>
+        </form>
+        <div id="rev-result"></div>
+        <div id="rev-chart-container" style="position:relative;height:300px;display:none;margin-top:1rem">
+            <canvas id="rev-chart"></canvas>
+        </div>
+        <div style="margin-top:1rem">
+            <a id="rev-export-link" href="#" class="outline" role="button" style="font-size:.8rem">📥 Export this ASIN's reverse simulations</a>
+        </div>
+    </article>
+</dialog>
+
+<!-- Price History Dialog -->
+<dialog id="history-dialog">
+    <article style="width:min(90vw,850px);max-height:92vh;overflow-y:auto">
+        <header>
+            <button aria-label="Close" rel="prev" onclick="document.getElementById('history-dialog').close()"></button>
+            <strong id="history-title">📈 Price History</strong>
+        </header>
+        <div id="history-info" class="stats-grid" style="margin-bottom:1rem"></div>
+        <div style="display:flex;gap:0.8rem;align-items:center;margin-bottom:0.8rem;flex-wrap:wrap">
+            <select id="history-period" onchange="loadHistory()" style="width:auto;margin:0">
+                <option value="30d">Last 30 days</option>
+                <option value="60d">Last 60 days</option>
+                <option value="90d" selected>Last 90 days</option>
+                <option value="">All time</option>
+            </select>
+            <a id="history-export-link" href="#" class="outline" role="button" style="font-size:.8rem">📥 Export CSV</a>
+        </div>
+        <div id="history-chart-container" style="position:relative;height:280px;display:none">
+            <canvas id="history-chart"></canvas>
+        </div>
+        <div id="history-stats" style="margin-top:1rem"></div>
+    </article>
+</dialog>
+
 {% endblock %}
 
 {% block scripts %}
@@ -102,6 +167,8 @@ let currentMkt='',currentAsin='',lastCurrency='',currentPrice=null;
 let forecastChart=null,forecastLastData=null,usdRate=null;
 let allProducts=[],activeMktFilter='ALL';
 const FLAGS={AE:'🇦🇪',SA:'🇸🇦',AU:'🇦🇺'};
+const MKT_CURRENCY={AE:'AED',SA:'SAR',AU:'AUD'};
+const MKT_DOMAIN={AE:'amazon.ae',SA:'amazon.sa',AU:'amazon.com.au'};
 
 document.addEventListener('DOMContentLoaded',loadProducts);
 document.getElementById('add-form').addEventListener('submit',async(e)=>{
@@ -114,7 +181,25 @@ document.getElementById('add-form').addEventListener('submit',async(e)=>{
     try{
         const r=await fetch(`${API}/products`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({asin,marketplace:mkt})});
         if(!r.ok){const e=await r.json();throw new Error(e.detail||'Failed');}
-        showToast(`Added & crawled ${FLAGS[mkt]||''} ${mkt}/${asin}`);
+        // Check if price was fetched
+        try{
+            const snap=await fetch(`${API}/products/${mkt}/${asin}/latest`);
+            if(snap.ok){
+                const s=await snap.json();
+                if(!s.current_price){
+                    const vpnMsg = mkt==='AU' 
+                        ? `⚠️ ${mkt}/${asin}: Amazon AU loads prices via JavaScript. Please enter the price manually in Custom Price field.`
+                        : `⚠️ ${mkt}/${asin}: Price not detected. Try enabling VPN to ${mkt==='AE'?'UAE':'Saudi Arabia'} and reload.`;
+                    showToast(vpnMsg, true);
+                } else {
+                    showToast(`Added & crawled ${FLAGS[mkt]||''} ${mkt}/${asin}: ${s.currency} ${s.current_price}`);
+                }
+            } else {
+                showToast(`Added ${FLAGS[mkt]||''} ${mkt}/${asin} but crawl may have failed. Try VPN.`,true);
+            }
+        }catch(e2){
+            showToast(`Added ${FLAGS[mkt]||''} ${mkt}/${asin}`);
+        }
         document.getElementById('asin').value='';loadProducts();
     }catch(e){showToast(e.message,true);}
     finally{btn.disabled=false;btn.textContent='Track';}
@@ -128,7 +213,10 @@ async function reloadAll(btn){
         const d=await r.json();
         const ok=d.results.filter(x=>x.status==='ok').length;
         const fail=d.results.filter(x=>x.status==='failed').length;
-        showToast(`Reloaded: ${ok} success, ${fail} failed`);
+        const noPrice=d.results.filter(x=>x.status==='ok'&&!x.price).length;
+        let msg=`Reloaded: ${ok} success, ${fail} failed`;
+        if(noPrice>0) msg+=` ⚠️ ${noPrice} product(s) have no price — try VPN`;
+        showToast(msg, noPrice>0||fail>0);
         loadProducts();
     }catch(e){showToast(e.message,true);}
     finally{btn.disabled=false;btn.textContent='🔄 Reload All Prices';}
@@ -170,18 +258,46 @@ function renderProducts(){
             <div><strong>${p.title||p.asin}</strong><br><small style="opacity:.6">${p.asin} · ${p.brand||'—'}</small></div>
             <span class="badge badge-${p.marketplace.toLowerCase()}">${FLAGS[p.marketplace]||''} ${p.marketplace}</span>
             <div class="actions">
+                ${p.marketplace==='AU'?`<span style="display:inline-flex;align-items:center;gap:0.3rem"><small>AUD</small><input type="number" id="au-price-${p.asin}" min="0" step="0.01" placeholder="price" style="width:80px;margin:0;padding:0.2rem 0.4rem;font-size:0.8rem"><button class="outline" onclick="saveAuPrice('${p.asin}',this)" style="padding:0.2rem 0.5rem;font-size:0.75rem">💾</button></span>`:''}
+                <button class="outline" onclick="openHistory('${p.marketplace}','${p.asin}','${(p.title||p.asin).replace(/'/g,"\\'")}')">📈 History</button>
                 <button class="outline" onclick="openSim('${p.marketplace}','${p.asin}','${(p.title||p.asin).replace(/'/g,"\\'")}')">🔮 Simulate</button>
+                <button class="outline" onclick="openReverse('${p.marketplace}','${p.asin}','${(p.title||p.asin).replace(/'/g,"\\'")}')">🔄 Reverse</button>
+                <button class="outline" onclick="deleteProduct('${p.marketplace}','${p.asin}',this)" style="color:#ef4444">🗑</button>
             </div>
         </div></article></div>`).join('');
+}
+async function saveAuPrice(asin,btn){
+    const input=document.getElementById('au-price-'+asin);
+    if(!input) return;
+    const val=parseFloat(input.value);
+    if(isNaN(val)||val<=0){showToast('Enter a valid AUD price',true);return;}
+    btn.disabled=true;
+    try{
+        const r=await fetch(`${API}/products/AU/${asin}/manual-price`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({price:val,currency:'AUD'})});
+        if(!r.ok){const e=await r.json();throw new Error(e.detail||'Failed');}
+        showToast(`AU/${asin}: AUD ${val} saved as data point`);
+        input.value='';
+    }catch(e){showToast(e.message,true);}
+    finally{btn.disabled=false;}
+}
+async function deleteProduct(mkt,asin,btn){
+    if(!confirm(`Hide ${mkt}/${asin} from dashboard?`)) return;
+    btn.disabled=true;
+    try{
+        const r=await fetch(`${API}/products/${mkt}/${asin}`,{method:'DELETE'});
+        if(!r.ok){const e=await r.json();throw new Error(e.detail||'Failed');}
+        showToast(`Deleted ${mkt}/${asin}`);
+        loadProducts();
+    }catch(e){showToast(e.message,true);}
+    finally{btn.disabled=false;}
 }
 async function openSim(mkt,asin,title){
     currentMkt=mkt;currentAsin=asin;
     document.getElementById('sim-title').textContent=`${title} (${mkt}/${asin})`;
     document.getElementById('forecast-info').innerHTML='';
     document.getElementById('forecast-container').style.display='none';
-    // Set default forecast date to 90 days from today
-    const d=new Date();d.setDate(d.getDate()+90);
-    document.getElementById('forecast-end-date').value=d.toISOString().split('T')[0];
+    // Clear forecast date so user picks their own
+    document.getElementById('forecast-end-date').value='';
     document.getElementById('export-asin-link').href=`${API}/simulations/export?marketplace=${mkt}&asin=${asin}`;
     forecastLastData=null;
     const info=document.getElementById('current-price-info');
@@ -191,21 +307,94 @@ async function openSim(mkt,asin,title){
         if(r.ok){const s=await r.json();lastCurrency=s.currency||'';currentPrice=s.current_price;
             info.innerHTML=`
                 <div class="stat-card"><article><div class="stat-value">${s.currency} ${s.current_price??'—'}</div><div class="stat-label">Current Price</div></article></div>
-                <div class="stat-card"><article><div class="stat-value">${s.rating??'—'} ⭐</div><div class="stat-label">${s.review_count??0} reviews</div></article></div>
-                <div class="stat-card"><article><div class="stat-value">${s.availability_text||'—'}</div><div class="stat-label">Availability</div></article></div>`;
+                <div class="stat-card"><article><div class="stat-value">${s.rating??'—'} ⭐</div><div class="stat-label">${s.review_count??0} reviews</div></article></div>`;
         }else{info.innerHTML='<p>No price data yet.</p>';currentPrice=null;}
     }catch(e){info.innerHTML='<p>Failed.</p>';currentPrice=null;}
+    // Pre-fetch USD rate
+    if(lastCurrency) await fetchUsdRate(lastCurrency);
+    document.getElementById('forecast-usd').checked=false;
+    document.getElementById('usd-rate-info').textContent='';
+    // Show inline warning + manual price input when price is missing
+    const manualWarn=document.getElementById('manual-price-warning');
+    if(manualWarn) manualWarn.remove();
+    if(!currentPrice){
+        const mktCurrency=MKT_CURRENCY[mkt]||'USD';
+        lastCurrency=mktCurrency;
+        const mktDomain=MKT_DOMAIN[mkt]||'amazon.com';
+        const warn=document.createElement('div');
+        warn.id='manual-price-warning';
+        warn.innerHTML=`
+            <div style="background:#ef444422;border:1px solid #ef4444;border-radius:8px;padding:0.8rem 1rem;margin-bottom:1rem;display:flex;align-items:center;gap:0.8rem;flex-wrap:wrap">
+                <span style="color:#ef4444;font-weight:600">⚠️ ${mkt} price auto-fetch unavailable</span>
+                <span style="opacity:0.7;font-size:0.85rem">Check ${mktDomain} and enter the price manually</span>
+                <label style="margin:0;display:flex;align-items:center;gap:0.4rem">
+                    <small style="white-space:nowrap">${mktCurrency}</small>
+                    <input type="number" id="sim-manual-price" min="0" step="0.01" placeholder="Enter price" style="width:130px;margin:0;border-color:#ef4444">
+                    <button type="button" onclick="applyManualPrice('sim')" style="margin:0;padding:0.3rem 0.8rem;font-size:0.85rem">Apply</button>
+                </label>
+            </div>`;
+        info.after(warn);
+    }
     document.getElementById('sim-dialog').showModal();
 }
+
 async function fetchUsdRate(cur){
     if(!cur||cur==='USD'){usdRate=1;return;}
     try{const r=await fetch(`${API}/exchange-rate?from_currency=${cur}&to_currency=USD`);if(r.ok)usdRate=(await r.json()).rate;}catch(e){usdRate=null;}
+}
+
+function applyManualPrice(ctx){
+    const inputId=ctx==='sim'?'sim-manual-price':'rev-manual-price';
+    const infoId=ctx==='sim'?'current-price-info':'rev-price-info';
+    const warnId=ctx==='sim'?'manual-price-warning':'manual-price-warning-rev';
+    const input=document.getElementById(inputId);
+    if(!input) return;
+    const val=parseFloat(input.value);
+    if(isNaN(val)||val<=0){showToast('Please enter a valid price',true);return;}
+    const cur=MKT_CURRENCY[currentMkt]||'USD';
+    currentPrice=val;lastCurrency=cur;
+    const info=document.getElementById(infoId);
+    info.innerHTML=`
+        <div class="stat-card"><article><div class="stat-value">${cur} ${val}</div><div class="stat-label">Current Price (manual)</div></article></div>
+        <div class="stat-card"><article><div class="stat-value">—</div><div class="stat-label">Rating</div></article></div>`;
+    const warn=document.getElementById(warnId);
+    if(warn) warn.innerHTML=`<div style="background:#10b98122;border:1px solid #10b981;border-radius:8px;padding:0.6rem 1rem;margin-bottom:1rem;color:#10b981;font-weight:600">✅ ${cur} ${val} applied</div>`;
+    showToast(`${currentMkt} price ${cur} ${val} applied`);
+}
+
+function onUsdToggle(){
+    // Update current price display
+    updateCurrentPriceDisplay();
+    // Update chart if exists
+    if(forecastLastData) renderForecastChart(forecastLastData);
+}
+
+function updateCurrentPriceDisplay(){
+    const info=document.getElementById('current-price-info');
+    if(!currentPrice) return;
+    const showUsd=document.getElementById('forecast-usd').checked&&usdRate&&usdRate!==1;
+    const cur=showUsd?'USD':lastCurrency;
+    const price=showUsd?+(currentPrice*usdRate).toFixed(2):currentPrice;
+    const rateInfo=document.getElementById('usd-rate-info');
+    if(showUsd&&usdRate) rateInfo.textContent=`1 ${lastCurrency} = ${usdRate} USD`;
+    else rateInfo.textContent='';
+    // Re-render price card only (keep rating)
+    const cards=info.querySelectorAll('.stat-card');
+    if(cards[0]){
+        cards[0].querySelector('.stat-value').textContent=`${cur} ${price}`;
+    }
 }
 async function runForecast(){
     const forecastDate=document.getElementById('forecast-end-date').value;
     const customPrice=document.getElementById('forecast-custom-price').value;
     const customStart=document.getElementById('forecast-custom-start').value||'';
-    const customDur=document.getElementById('forecast-custom-dur').value||0;
+    const customEndDate=document.getElementById('forecast-custom-end').value||'';
+    // Calculate duration from start/end dates
+    let customDur=0;
+    if(customStart&&customEndDate){
+        const d1=new Date(customStart),d2=new Date(customEndDate);
+        customDur=Math.max(1,Math.round((d2-d1)/(1000*60*60*24)));
+    }
     const container=document.getElementById('forecast-container');
     const info=document.getElementById('forecast-info');
     if(!forecastDate){showToast('Please select a Forecast Until date',true);return;}
@@ -213,6 +402,8 @@ async function runForecast(){
     info.innerHTML='<p>Forecasting...</p>';container.style.display='none';
     let url=`${API}/products/${currentMkt}/${currentAsin}/forecast?forecast_date=${forecastDate}`;
     if(customPrice) url+=`&custom_price=${customPrice}&custom_start_date=${customStart}&custom_duration=${customDur}`;
+    // Pass manual price when current price was manually entered
+    if(currentPrice) url+=`&manual_price=${currentPrice}`;
     try{
         const r=await fetch(url);if(!r.ok){const e=await r.json();throw new Error(e.detail||'Fail');}
         const data=await r.json();forecastLastData=data;
@@ -224,6 +415,7 @@ async function runForecast(){
             custom_price:data.custom_price,custom_start_day:data.custom_start_day,
             custom_duration:data.custom_duration,currency:data.currency,
             forecast_days:data.days,forecast:data.forecast,
+            sim_type:'forecast',
         })});
     }catch(e){info.innerHTML=`<p style="color:#ef4444">${e.message}</p>`;}
 }
@@ -256,7 +448,9 @@ function renderForecastChart(data){
         }
     },annotation:{annotations:{
         ...(data.custom_start_date?{customStartLine:{type:'line',xMin:data.custom_start_date,xMax:data.custom_start_date,borderColor:'#ef4444',borderWidth:2,borderDash:[4,4],label:{display:true,content:'Custom Start',position:'start',backgroundColor:'#ef444488',font:{size:10}}}}:{}),
-        forecastDateLine:{type:'line',xMin:data.forecast_date,xMax:data.forecast_date,borderColor:'#6366f1',borderWidth:2,borderDash:[4,4],label:{display:true,content:'Forecast Date',position:'start',backgroundColor:'#6366f188',font:{size:10}}}
+        forecastDateLine:{type:'line',xMin:data.forecast_date,xMax:data.forecast_date,borderColor:'#6366f1',borderWidth:2,borderDash:[4,4],label:{display:true,content:'Forecast Date',position:'start',backgroundColor:'#6366f188',font:{size:10}}},
+        ...(data.was_change_date?{wasChangeLine:{type:'line',xMin:data.was_change_date,xMax:data.was_change_date,borderColor:'#f59e0b',borderWidth:1,borderDash:[3,3],label:{display:true,content:'Was Δ',position:'end',backgroundColor:'#f59e0b88',font:{size:9}}}}:{}),
+        ...(data.t30_change_date?{t30ChangeLine:{type:'line',xMin:data.t30_change_date,xMax:data.t30_change_date,borderColor:'#10b981',borderWidth:1,borderDash:[3,3],label:{display:true,content:'T30 Δ',position:'end',backgroundColor:'#10b98188',font:{size:9}}}}:{})
     }}},scales:{y:{beginAtZero:false,grid:{color:'#ffffff11'}},x:{grid:{display:false},ticks:{maxTicksLimit:10}}}}});
     let desc=`Current: ${data.currency} ${data.current_price}`;
     if(data.custom_price!=null) desc+=` | Custom: ${data.currency} ${data.custom_price} (from ${data.custom_start_date||'today'} for ${data.custom_duration}d)`;
@@ -273,9 +467,191 @@ function renderForecastChart(data){
                 <div class="stat-value" style="color:#10b981">${ft30!=null?cur+' '+ft30:'—'}</div>
                 <div class="stat-label">T30 @ ${data.forecast_date}</div>
             </article></div>
+            <div class="stat-card"><article>
+                <div class="stat-value" style="font-size:0.9rem">${data.was_change_date||'No change'}</div>
+                <div class="stat-label">Was Price changes from</div>
+            </article></div>
+            <div class="stat-card"><article>
+                <div class="stat-value" style="font-size:0.9rem">${data.t30_change_date||'No change'}</div>
+                <div class="stat-label">T30 changes from</div>
+            </article></div>
         </div>`;
     const detail=document.getElementById('forecast-detail');
     detail.innerHTML=`<small>${desc}${un} | ✅ Saved</small>`;
+}
+
+let revChart=null;
+async function openReverse(mkt,asin,title){
+    currentMkt=mkt;currentAsin=asin;
+    document.getElementById('rev-title').textContent=`🔄 Reverse: ${title} (${mkt}/${asin})`;
+    document.getElementById('rev-result').innerHTML='';
+    document.getElementById('rev-chart-container').style.display='none';
+    // Clear target date so user picks their own
+    document.getElementById('rev-target-date').value='';
+    document.getElementById('rev-target-price').value='';
+    document.getElementById('rev-export-link').href=`${API}/simulations/export?marketplace=${mkt}&asin=${asin}`;
+
+    const info=document.getElementById('rev-price-info');
+    info.innerHTML='<p>Loading...</p>';
+    try{
+        const r=await fetch(`${API}/products/${mkt}/${asin}/latest`);
+        if(r.ok){const s=await r.json();lastCurrency=s.currency||'';currentPrice=s.current_price;
+            info.innerHTML=`
+                <div class="stat-card"><article><div class="stat-value">${s.currency} ${s.current_price??'—'}</div><div class="stat-label">Current Price</div></article></div>
+                <div class="stat-card"><article><div class="stat-value">${s.rating??'—'} ⭐</div><div class="stat-label">${s.review_count??0} reviews</div></article></div>`;
+        }else{info.innerHTML='<p>No price data.</p>';}
+    }catch(e){info.innerHTML='<p>Failed.</p>';}
+    // Show inline warning + manual price input when price is missing
+    const revWarn=document.getElementById('manual-price-warning-rev');
+    if(revWarn) revWarn.remove();
+    if(!currentPrice){
+        const mktCurrency=MKT_CURRENCY[mkt]||'USD';
+        lastCurrency=mktCurrency;
+        const mktDomain=MKT_DOMAIN[mkt]||'amazon.com';
+        const warn=document.createElement('div');
+        warn.id='manual-price-warning-rev';
+        warn.innerHTML=`
+            <div style="background:#ef444422;border:1px solid #ef4444;border-radius:8px;padding:0.8rem 1rem;margin-bottom:1rem;display:flex;align-items:center;gap:0.8rem;flex-wrap:wrap">
+                <span style="color:#ef4444;font-weight:600">⚠️ ${mkt} price auto-fetch unavailable</span>
+                <span style="opacity:0.7;font-size:0.85rem">Check ${mktDomain} and enter the price manually</span>
+                <label style="margin:0;display:flex;align-items:center;gap:0.4rem">
+                    <small style="white-space:nowrap">${mktCurrency}</small>
+                    <input type="number" id="rev-manual-price" min="0" step="0.01" placeholder="Enter price" style="width:130px;margin:0;border-color:#ef4444">
+                    <button type="button" onclick="applyManualPrice('rev')" style="margin:0;padding:0.3rem 0.8rem;font-size:0.85rem">Apply</button>
+                </label>
+            </div>`;
+        info.after(warn);
+    }
+    document.getElementById('rev-dialog').showModal();
+}
+
+async function runReverse(){
+    const targetDate=document.getElementById('rev-target-date').value;
+    const targetPrice=document.getElementById('rev-target-price').value;
+    const targetType=document.getElementById('rev-target-type').value;
+    const resultEl=document.getElementById('rev-result');
+    const chartContainer=document.getElementById('rev-chart-container');
+
+    if(!targetDate||!targetPrice){showToast('Fill in all reverse simulation fields',true);return;}
+    resultEl.innerHTML='<p>Calculating...</p>';
+    chartContainer.style.display='none';
+
+    try{
+        const r=await fetch(`${API}/products/${currentMkt}/${currentAsin}/reverse-forecast?target_date=${targetDate}&target_price=${targetPrice}&target_type=${targetType}${currentPrice?'&manual_price='+currentPrice:''}`);
+        if(!r.ok){const e=await r.json();throw new Error(e.detail||'Fail');}
+        const data=await r.json();
+        const cur=data.currency||lastCurrency;
+        const typeLabel=targetType==='was_price'?'Was Price':'T30';
+
+        // Show best result
+        if(data.best_start){
+            const b=data.best_start;
+            resultEl.innerHTML=`
+                <div class="stats-grid" style="margin-top:0.5rem">
+                    <div class="stat-card"><article>
+                        <div class="stat-value" style="color:#6366f1">${b.start_date}</div>
+                        <div class="stat-label">Deadline (start by)</div>
+                    </article></div>
+                    <div class="stat-card"><article>
+                        <div class="stat-value" style="color:#f59e0b">${cur} ${targetPrice}</div>
+                        <div class="stat-label">Set price to</div>
+                    </article></div>
+                    <div class="stat-card"><article>
+                        <div class="stat-value">${b.days_needed} days</div>
+                        <div class="stat-label">Min duration</div>
+                    </article></div>
+                </div>
+                <small style="opacity:0.7">To achieve ${typeLabel} ≥ ${cur} ${targetPrice} by ${targetDate}, change price no later than <strong>${b.start_date}</strong></small>
+                <br><small style="opacity:0.5">X-axis = Price change start date.</small>
+                <br><small style="opacity:0.5">Y-axis = Resulting ${typeLabel} at target date if you start changing price on that day.</small>`;
+        } else {
+            resultEl.innerHTML=`<p style="color:#ef4444">Cannot achieve target ${typeLabel} of ${cur} ${targetPrice} by ${targetDate} with price ${cur} ${targetPrice}.</p>`;
+        }
+
+        // Draw chart
+        if(data.timeline&&data.timeline.length>0){
+            // Save reverse simulation
+            await fetch(`${API}/simulations/save`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+                asin:currentAsin,marketplace:currentMkt,current_price:data.current_price,
+                custom_price:parseFloat(targetPrice),currency:data.currency,
+                custom_start_day:data.best_start?data.best_start.start_date:'',
+                custom_duration:data.best_start?data.best_start.days_needed:0,
+                sim_type:'reverse',target_price:parseFloat(targetPrice),target_type:targetType,target_date:targetDate,
+                forecast:data.timeline,forecast_days:data.timeline.length,
+            })});
+
+            chartContainer.style.display='block';
+            const ctx=document.getElementById('rev-chart').getContext('2d');
+            if(revChart) revChart.destroy();
+            const labels=data.timeline.map(t=>t.start_date);
+            const wasData=data.timeline.map(t=>t.resulting_was_price);
+            const t30Data=data.timeline.map(t=>t.resulting_t30);
+
+            revChart=new Chart(ctx,{type:'line',data:{labels,datasets:[
+                {label:`Resulting Was Price (${cur})`,data:wasData,borderColor:'#f59e0b',fill:false,tension:.3,pointRadius:1},
+                {label:`Resulting T30 (${cur})`,data:t30Data,borderColor:'#10b981',fill:false,tension:.3,pointRadius:1},
+                {label:`Target ${typeLabel}`,data:labels.map(()=>parseFloat(targetPrice)),borderColor:'#ef4444',borderDash:[5,5],fill:false,pointRadius:0}
+            ]},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
+                plugins:{legend:{display:true,position:'top'},tooltip:{enabled:true,mode:'index',intersect:false,backgroundColor:'rgba(0,0,0,0.85)',titleFont:{size:14,weight:'bold'},bodyFont:{size:13},padding:12,cornerRadius:8}},
+                scales:{y:{beginAtZero:false,grid:{color:'#ffffff11'}},x:{grid:{display:false},ticks:{maxTicksLimit:10},title:{display:true,text:'Price change start date'}}}}});
+        }
+    }catch(e){resultEl.innerHTML=`<p style="color:#ef4444">${e.message}</p>`;}
+}
+
+// ── Price History ──────────────────────────────────────────────
+let historyChart=null,historyMkt='',historyAsin='';
+
+async function openHistory(mkt,asin,title){
+    historyMkt=mkt;historyAsin=asin;
+    document.getElementById('history-title').textContent=`📈 ${title} (${mkt}/${asin})`;
+    document.getElementById('history-export-link').href=`${API}/products/${mkt}/${asin}/export`;
+    document.getElementById('history-chart-container').style.display='none';
+    document.getElementById('history-stats').innerHTML='';
+    document.getElementById('history-info').innerHTML='<p>Loading...</p>';
+    document.getElementById('history-dialog').showModal();
+    await loadHistory();
+}
+
+async function loadHistory(){
+    const period=document.getElementById('history-period').value;
+    const info=document.getElementById('history-info');
+    const container=document.getElementById('history-chart-container');
+    const stats=document.getElementById('history-stats');
+    let url=`${API}/products/${historyMkt}/${historyAsin}/history`;
+    if(period) url+=`?period=${period}`;
+    try{
+        const r=await fetch(url);
+        if(!r.ok) throw new Error('Failed to load history');
+        const data=await r.json();
+        if(!data.length){
+            info.innerHTML='<p>No price history yet. Prices are recorded every 6 hours.</p>';
+            container.style.display='none';
+            stats.innerHTML='';
+            return;
+        }
+        const prices=data.filter(s=>s.current_price!=null);
+        const cur=data[0].currency||MKT_CURRENCY[historyMkt]||'';
+        const latest=prices.length?prices[prices.length-1]:null;
+        const highest=prices.length?Math.max(...prices.map(s=>s.current_price)):null;
+        const lowest=prices.length?Math.min(...prices.map(s=>s.current_price)):null;
+        info.innerHTML=`
+            <div class="stat-card"><article><div class="stat-value">${cur} ${latest?latest.current_price:'—'}</div><div class="stat-label">Latest Price</div></article></div>
+            <div class="stat-card"><article><div class="stat-value" style="color:#10b981">${cur} ${lowest??'—'}</div><div class="stat-label">Lowest</div></article></div>
+            <div class="stat-card"><article><div class="stat-value" style="color:#ef4444">${cur} ${highest??'—'}</div><div class="stat-label">Highest</div></article></div>
+            <div class="stat-card"><article><div class="stat-value">${prices.length}</div><div class="stat-label">Data Points</div></article></div>`;
+        // Chart
+        container.style.display='block';
+        const ctx=document.getElementById('history-chart').getContext('2d');
+        if(historyChart) historyChart.destroy();
+        const labels=data.map(s=>new Date(s.crawl_timestamp).toLocaleDateString('en-US',{month:'short',day:'numeric'}));
+        const priceData=data.map(s=>s.current_price);
+        historyChart=new Chart(ctx,{type:'line',data:{labels,datasets:[
+            {label:`Price (${cur})`,data:priceData,borderColor:'#6366f1',backgroundColor:'#6366f122',fill:true,tension:.3,pointRadius:2}
+        ]},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
+            plugins:{legend:{display:false},tooltip:{backgroundColor:'rgba(0,0,0,0.85)',padding:10,cornerRadius:8}},
+            scales:{y:{beginAtZero:false,grid:{color:'#ffffff11'}},x:{grid:{display:false},ticks:{maxTicksLimit:12}}}}});
+        stats.innerHTML=`<small style="opacity:0.5">${prices.length} snapshots from ${labels[0]} to ${labels[labels.length-1]}</small>`;
+    }catch(e){info.innerHTML=`<p style="color:#ef4444">${e.message}</p>`;}
 }
 </script>
 {% endblock %}
